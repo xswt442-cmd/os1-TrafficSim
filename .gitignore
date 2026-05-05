@@ -17,3 +17,4 @@ dist/
 # 环境变量/本地配置
 .env
 needs.md
+.claude
