@@ -1,4 +1,7 @@
-﻿gradio>=5.0.0
+rich>=13.0.0
 pyinstaller>=6.0.0
-fastapi
-uvicorn
+
+# 可选依赖（仅 Web 模式需要）
+# gradio>=5.0.0
+# fastapi
+# uvicorn

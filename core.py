@@ -296,34 +296,50 @@ class TrafficSimulationBackend:
 
 # 后端验证
 def validate_backend(runtime_sec: int = 20, print_every_sec: int = 2) -> Dict[str, object]:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.live import Live
+
     backend = TrafficSimulationBackend()
     backend.start()
     begin = time.monotonic()
     next_print = begin
+    console = Console()
 
-    try:
-        while True:
-            now = time.monotonic()
-            if now - begin >= runtime_sec:
-                break
-            if now >= next_print:
-                snap = backend.snapshot()
-                print(
-                    "[t={elapsed:>5.1f}s] 相位={phase:<8} 剩余={remain:>2}s "
-                    "生成={gen:>4} 通行={pas:>4} 紧急={emg:>3} 平均等待={avg:.2f}s".format(
-                        elapsed=snap["elapsed_sec"],
-                        phase=snap["phase"],
-                        remain=snap["phase_remaining_sec"],
-                        gen=snap["generated_total"],
-                        pas=snap["passed_total"],
-                        emg=snap["passed_emergency"],
-                        avg=snap["avg_wait_sec"],
-                    )
-                )
-                next_print += print_every_sec
-            time.sleep(0.05)
-    finally:
-        backend.stop()
+    def _build_table(snap: Dict[str, object]) -> Table:
+        t = Table(title="后端验证运行中", border_style="blue", box=None)
+        t.add_column("时间", justify="right", style="cyan")
+        t.add_column("相位", style="yellow")
+        t.add_column("剩余", justify="right")
+        t.add_column("生成", justify="right")
+        t.add_column("通行", justify="right")
+        t.add_column("紧急", justify="right")
+        t.add_column("平均等待", justify="right")
+        t.add_row(
+            f"{float(snap['elapsed_sec']):.1f}s",
+            str(snap["phase"]),
+            f"{int(snap['phase_remaining_sec'])}s",
+            str(int(snap["generated_total"])),
+            str(int(snap["passed_total"])),
+            str(int(snap["passed_emergency"])),
+            f"{float(snap['avg_wait_sec']):.3f}s",
+        )
+        return t
+
+    snap = backend.snapshot()
+    with Live(_build_table(snap), console=console, refresh_per_second=2) as live:
+        try:
+            while True:
+                now = time.monotonic()
+                if now - begin >= runtime_sec:
+                    break
+                if now >= next_print:
+                    snap = backend.snapshot()
+                    live.update(_build_table(snap))
+                    next_print += print_every_sec
+                time.sleep(0.05)
+        finally:
+            backend.stop()
 
     result = backend.snapshot()
     assert result["generated_total"] > 0, "没有生成车辆，仿真失败"
@@ -331,14 +347,20 @@ def validate_backend(runtime_sec: int = 20, print_every_sec: int = 2) -> Dict[st
     assert result["ordinary_red_light_violation"] == 0, "普通车辆出现闯红灯通行"
     assert result["fifo_violations"] == 0, "至少一条车道出现 FIFO 顺序违规"
 
-    print("\n后端验证通过。")
-    print(
-        "最终统计: 生成={gen}, 通行={pas}, 紧急={emg}, 平均等待={avg}s, 最大等待={mx}s".format(
-            gen=result["generated_total"],
-            pas=result["passed_total"],
-            emg=result["passed_emergency"],
-            avg=result["avg_wait_sec"],
-            mx=result["max_wait_sec"],
-        )
+    console.print()
+    console.print("[bold green]后端验证通过。[/]")
+    final_t = Table(title="最终统计", border_style="green")
+    final_t.add_column("生成", justify="right", style="cyan")
+    final_t.add_column("通行", justify="right", style="green")
+    final_t.add_column("紧急", justify="right", style="yellow")
+    final_t.add_column("平均等待", justify="right")
+    final_t.add_column("最大等待", justify="right")
+    final_t.add_row(
+        str(int(result["generated_total"])),
+        str(int(result["passed_total"])),
+        str(int(result["passed_emergency"])),
+        f"{float(result['avg_wait_sec']):.3f}s",
+        f"{float(result['max_wait_sec']):.3f}s",
     )
+    console.print(final_t)
     return result

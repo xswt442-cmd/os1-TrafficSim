@@ -3,6 +3,13 @@
 import time
 from typing import Dict, Optional
 
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich import box
+
 from core import Phase, TrafficSimulationBackend
 
 # 显示的“图形”界面
@@ -148,12 +155,74 @@ def render_console(snap: Dict[str, object]) -> str:
     lines.append("提示: 按 Ctrl+C 停止控制台模式")
     return "\n".join(lines)
 
+
+def render_rich(snap: Dict[str, object]) -> Panel:
+    """返回 rich Panel，用于控制台 live 模式渲染。"""
+    phase = str(snap["phase"])
+    phase_cn = _phase_to_cn(phase)
+    ew_green = phase == Phase.EW_GREEN.value
+    ns_green = phase == Phase.NS_GREEN.value
+
+    stats = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+    stats.add_column(style="bold cyan")
+    stats.add_column(style="white")
+    stats.add_row("运行时间", f"{float(snap['elapsed_sec']):.1f} s")
+    stats.add_row("相位", f"{phase_cn}（剩余 {int(snap['phase_remaining_sec'])}s）")
+    ew_label = "[bold green]GREEN[/]" if ew_green else "[bold red]RED[/]"
+    ns_label = "[bold green]GREEN[/]" if ns_green else "[bold red]RED[/]"
+    stats.add_row("信号灯", f"EW={ew_label}  NS={ns_label}")
+    stats.add_row("")
+    stats.add_row("生成车辆", str(int(snap["generated_total"])))
+    stats.add_row("通行车辆", str(int(snap["passed_total"])))
+    stats.add_row("紧急通行", str(int(snap["passed_emergency"])))
+    stats.add_row("平均等待", f"{float(snap['avg_wait_sec']):.3f} s")
+    stats.add_row("最大等待", f"{float(snap['max_wait_sec']):.3f} s")
+    rv = int(snap["ordinary_red_light_violation"])
+    fv = int(snap["fifo_violations"])
+    rv_style = "[bold red]" if rv > 0 else "[green]"
+    fv_style = "[bold red]" if fv > 0 else "[green]"
+    stats.add_row("违规", f"闯红灯={rv_style}{rv}[/]  FIFO={fv_style}{fv}[/]")
+
+    passed = snap["passed_by_direction"]
+    dir_text = Text()
+    dir_text.append("方向通行: ", style="bold")
+    dir_text.append(f"东={int(passed['E'])}  ", style="cyan")
+    dir_text.append(f"西={int(passed['W'])}  ", style="yellow")
+    dir_text.append(f"南={int(passed['S'])}  ", style="magenta")
+    dir_text.append(f"北={int(passed['N'])}", style="blue")
+
+    events_text = Text()
+    recent_events = snap["recent_events"][-6:]
+    if recent_events:
+        for ev in recent_events:
+            events_text.append(f"  • {ev}\n", style="dim")
+    else:
+        events_text.append("  (暂无事件)", style="dim italic")
+
+    inner = Group(
+        stats,
+        Text(""),
+        dir_text,
+        Text(""),
+        Text("── 路口示意图 ──", style="bold underline"),
+        Text(render_console(snap)),
+        Text(""),
+        Text("── 最近事件 ──", style="bold underline"),
+        events_text,
+    )
+
+    elapsed = float(snap["elapsed_sec"])
+    title = f"[bold]🚦 十字路口交通仿真 - 控制台模式 [t={elapsed:.1f}s][/]"
+    return Panel(inner, title=title, border_style="cyan", box=box.ROUNDED)
+
 # 控制台模式相关的函数，供调用
 def ask_console_start() -> bool:
-    print("\n[控制台模式准备就绪]")
-    print("- 将每隔一段时间刷新显示路口状态")
-    print("- 按 Ctrl+C 可随时停止")
-    ans = input("按回车开始，输入 q 取消: ").strip().lower()
+    console = Console()
+    console.print()
+    console.print("[bold cyan]控制台模式准备就绪[/]")
+    console.print("  • 将每隔一段时间刷新显示路口状态")
+    console.print("  • 按 [bold]Ctrl+C[/] 可随时停止")
+    ans = console.input("[bold]按回车开始，输入 q 取消:[/] ").strip().lower()
     return ans != "q"
 
 # 控制台模式的运行函数，供调用
@@ -166,26 +235,28 @@ def run_console_mode(
         raise ValueError("refresh_interval_sec 必须大于 0")
 
     if start_prompt and not ask_console_start():
-        print("已取消进入控制台模式。")
+        Console().print("[yellow]已取消进入控制台模式。[/]")
         return
 
     backend = TrafficSimulationBackend()
     backend.start()
     start = time.monotonic()
+    rconsole = Console()
 
     try:
-        while True:
-            now = time.monotonic()
-            if runtime_sec is not None and now - start >= runtime_sec:
-                break
+        snap = backend.snapshot()
+        with Live(render_rich(snap), console=rconsole, refresh_per_second=4, screen=True) as live:
+            while True:
+                now = time.monotonic()
+                if runtime_sec is not None and now - start >= runtime_sec:
+                    break
 
-            snap = backend.snapshot()
-            print("\033[2J\033[H", end="")
-            print(render_console(snap))
-            time.sleep(refresh_interval_sec)
+                snap = backend.snapshot()
+                live.update(render_rich(snap))
+                time.sleep(refresh_interval_sec)
     except KeyboardInterrupt:
-        print("\n检测到手动中断，正在停止仿真...")
+        rconsole.print("\n[bold yellow]检测到手动中断，正在停止仿真...[/]")
     finally:
         backend.stop()
 
-    print("控制台模式已结束。")
+    rconsole.print("[bold green]控制台模式已结束。[/]")

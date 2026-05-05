@@ -2,9 +2,20 @@
 
 import argparse
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
 from console import run_console_mode
 from core import validate_backend
-from web import run_web_mode
+
+try:
+    from web import run_web_mode
+    _WEB_AVAILABLE = True
+except ImportError:
+    _WEB_AVAILABLE = False
+
+_console = Console()
 
 # 准备渲染函数
 def build_parser() -> argparse.ArgumentParser:
@@ -73,30 +84,45 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def prompt_web_start(host: str, port: int) -> bool:
-    print("\n[Web 模式准备就绪]")
-    print(f"- 即将启动地址: http://{host}:{port}")
-    print("- 启动后可在浏览器点击“启动仿真”按钮")
-    ans = input("按回车启动，输入 q 取消: ").strip().lower()
+    _console.print()
+    _console.print("[bold cyan]Web 模式准备就绪[/]")
+    _console.print(f"  - 即将启动地址: [bold underline]http://{host}:{port}[/]")
+    _console.print("  - 启动后可在浏览器点击 [bold]启动仿真[/] 按钮")
+    ans = _console.input("[bold]按回车启动，输入 q 取消:[/] ").strip().lower()
     return ans != "q"
 
 # 选择模式
 def choose_mode_interactively() -> str:
-    print("\n================ 十字路口交通仿真 ================")
-    print("1) 控制台模式")
-    print("2) Web 模式（受 pyinstaller 打包影响，exe无法展示，直接运行run脚本即可")
-    print("3) 后端验证模式")
-    print("q) 退出")
+    menu = Text()
+    menu.append("\n══════════ 十字路口交通仿真 ══════════\n", style="bold cyan")
+    menu.append("  1) ", style="bold")
+    menu.append("控制台模式\n")
+    if _WEB_AVAILABLE:
+        menu.append("  2) ", style="bold")
+        menu.append("Web 模式\n")
+    else:
+        menu.append("  2) ", style="bold dim")
+        menu.append("Web 模式 [dim](不可用 - 请通过源码运行)[/]\n")
+    menu.append("  3) ", style="bold")
+    menu.append("后端验证模式\n")
+    menu.append("  q) ", style="bold")
+    menu.append("退出\n")
+    _console.print(Panel(menu, border_style="cyan"))
+
     while True:
-        choice = input("请选择模式 [1/2/3/q]: ").strip().lower()
+        choice = _console.input("[bold]请选择模式 [1/2/3/q]:[/] ").strip().lower()
         if choice == "1":
             return "console"
         if choice == "2":
+            if not _WEB_AVAILABLE:
+                _console.print("[yellow]Web 模式不可用：gradio 未安装。请通过源码 python run.py --mode web 运行。[/]")
+                continue
             return "web"
         if choice == "3":
             return "validate"
         if choice == "q":
             return "quit"
-        print("输入无效，请重试。")
+        _console.print("[red]输入无效，请重试。[/]")
 
 # 主控
 def main() -> None:
@@ -107,8 +133,18 @@ def main() -> None:
     if mode == "menu":
         mode = choose_mode_interactively()
         if mode == "quit":
-            print("已退出。")
+            _console.print("[dim]已退出。[/]")
             return
+
+    if mode == "web":
+        if not _WEB_AVAILABLE:
+            _console.print("[yellow]Web 模式不可用：gradio 未安装。请通过源码 python run.py --mode web 运行。[/]")
+            return
+        if not args.no_start_prompt and not prompt_web_start(args.host, args.port):
+            _console.print("[yellow]已取消进入 Web 模式。[/]")
+            return
+        run_web_mode(host=args.host, port=args.port, share=args.share)
+        return
 
     if mode == "validate":
         validate_backend(runtime_sec=args.seconds, print_every_sec=args.print_every)
@@ -122,12 +158,6 @@ def main() -> None:
             start_prompt=not args.no_start_prompt,
         )
         return
-
-    if not args.no_start_prompt and not prompt_web_start(args.host, args.port):
-        print("已取消进入 Web 模式。")
-        return
-
-    run_web_mode(host=args.host, port=args.port, share=args.share)
 
 
 if __name__ == "__main__":
